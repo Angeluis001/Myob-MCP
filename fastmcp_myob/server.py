@@ -1,9 +1,8 @@
 import json
 import os
 import sys
-from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional
 
 import httpx
 from fastmcp import FastMCP, Context
@@ -12,7 +11,7 @@ from fastmcp import FastMCP, Context
 ROOT = Path(__file__).resolve().parent.parent
 SPEC_PATH = os.getenv(
     "MYOB_OPENAPI_PATH",
-    str(ROOT / "REDBACK_TEST_API.json"),
+    str(ROOT / "REDBACK_TEST_API_short.json"),
 )
 BASE_URL = os.getenv(
     "MYOB_BASE_URL",
@@ -26,97 +25,29 @@ LOGOUT_URL = os.getenv("MYOB_LOGOUT_URL", "https://redback.myobadvanced.com/enti
 # For multi-user isolation, run a dedicated process per user.
 client = httpx.AsyncClient(base_url=BASE_URL, headers={"Accept": "application/json"})
 
-def _parse_csv_env(name: str) -> Optional[List[str]]:
-    raw = os.getenv(name)
-    if not raw:
-        return None
-    # allow comma or semicolon separators
-    items = [x.strip() for x in raw.replace(";", ",").split(",")]
-    items = [x for x in items if x]
-    return items or None
-
-
-def filter_openapi_by_tags(
-    spec: Dict,
-    include_tags: Optional[List[str]] = None,
-    exclude_tags: Optional[List[str]] = None,
-    max_operations: Optional[int] = None,
-) -> Dict:
-    """Return a shallow-copied OpenAPI spec filtered by operation tags.
-
-    - Keep only operations that match include_tags (if provided)
-    - Drop operations that match exclude_tags (if provided)
-    - Optionally cap the total number of kept operations
-    """
-    include: Optional[Set[str]] = set(t.strip() for t in include_tags) if include_tags else None
-    exclude: Optional[Set[str]] = set(t.strip() for t in exclude_tags) if exclude_tags else None
-
-    new_spec = deepcopy(spec)
-    new_paths: Dict = {}
-    kept = 0
-
-    for path, path_item in spec.get("paths", {}).items():
-        # Each method is an operation object (get/post/put/delete/patch/options/head)
-        new_item = {}
-        for method, op in path_item.items():
-            if method.lower() not in ("get", "post", "put", "delete", "patch", "options", "head"):
-                continue
-            tags = set(op.get("tags", []) or [])
-
-            if include is not None and tags.isdisjoint(include):
-                continue
-            if exclude is not None and not tags.isdisjoint(exclude):
-                continue
-
-            if max_operations is not None and kept >= max_operations:
-                continue
-
-            new_item[method] = op
-            kept += 1
-
-        if new_item:
-            new_paths[path] = new_item
-
-    new_spec["paths"] = new_paths
-    return new_spec
-
 
 def build_mcp_from_env() -> FastMCP:
     """Build a FastMCP server instance based on env configuration.
 
     Env options:
-    - MYOB_INCLUDE_TAGS: comma/semicolon-separated list of tags to include
-    - MYOB_EXCLUDE_TAGS: comma/semicolon-separated list of tags to exclude
-    - MYOB_MAX_TOOLS: integer cap for number of operations exposed
     - MYOB_MODE: "full" (default) or "auth" (auth-only server)
     - MYOB_SERVER_NAME: override server name
+    - MYOB_OPENAPI_PATH: path to the already-filtered OpenAPI JSON
     """
     # Load base spec
     with open(SPEC_PATH, "r", encoding="utf-8") as f:
         base_spec = json.load(f)
 
     mode = os.getenv("MYOB_MODE", "full").lower()
-    include_tags = _parse_csv_env("MYOB_INCLUDE_TAGS")
-    exclude_tags = _parse_csv_env("MYOB_EXCLUDE_TAGS")
-    max_tools_raw = os.getenv("MYOB_MAX_TOOLS")
-    max_tools = int(max_tools_raw) if (max_tools_raw and max_tools_raw.isdigit()) else None
 
     if mode == "auth":
         # Empty paths; auth tools will be added below
-        filtered_spec = deepcopy(base_spec)
-        filtered_spec["paths"] = {}
+        filtered_spec = {**base_spec, "paths": {}}
         name = os.getenv("MYOB_SERVER_NAME", "MYOB Advanced (Auth)")
     else:
-        filtered_spec = filter_openapi_by_tags(
-            base_spec, include_tags=include_tags, exclude_tags=exclude_tags, max_operations=max_tools
-        )
-        # Derive a short name
-        if include_tags and len(include_tags) == 1:
-            default_name = f"MYOB Advanced ({include_tags[0]})"
-        elif include_tags:
-            default_name = f"MYOB Advanced (tags: {', '.join(include_tags[:5])}{'…' if len(include_tags) > 5 else ''})"
-        else:
-            default_name = "MYOB Advanced (OpenAPI)"
+        # Use spec as-is; any filtering/inlining should be done by the external script.
+        filtered_spec = base_spec
+        default_name = "MYOB Advanced (OpenAPI)"
         name = os.getenv("MYOB_SERVER_NAME", default_name)
 
     mcp = FastMCP.from_openapi(
@@ -129,7 +60,7 @@ def build_mcp_from_env() -> FastMCP:
     # Always offer basic auth/connectivity helpers unless explicitly disabled
     if os.getenv("MYOB_DISABLE_AUTH_TOOLS", "false").lower() not in ("1", "true", "yes"):  # keep by default
 
-        @mcp.tool
+        @mcp.tool()
         async def login(name: str, password: str, company: str, branch: str) -> dict:
             """Login to MYOB (cookie session). Required before calling other tools.
             Returns status code and any response JSON."""
@@ -148,7 +79,7 @@ def build_mcp_from_env() -> FastMCP:
                 data = {"text": resp.text}
             return {"status_code": resp.status_code, "ok": resp.is_success, "data": data}
 
-        @mcp.tool
+        @mcp.tool()
         async def logout() -> dict:
             """Logout current MYOB session and clear cookies."""
             global client
@@ -161,7 +92,7 @@ def build_mcp_from_env() -> FastMCP:
             client = httpx.AsyncClient(base_url=BASE_URL, headers={"Accept": "application/json"})
             return {"status_code": resp.status_code, "ok": resp.is_success}
 
-        @mcp.tool
+        @mcp.tool()
         async def ping(ctx: Context) -> str:
             """Connectivity check for MYOB server and MCP transport."""
             await ctx.info(f"Base URL: {BASE_URL}")
