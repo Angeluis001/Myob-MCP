@@ -1,0 +1,24 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Others
+.azure/
+.vscode/
+.idea/
+*.log
