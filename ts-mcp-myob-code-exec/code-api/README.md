@@ -28,3 +28,26 @@ Wrappers are generated from the OpenAPI used by the server.
 - Output: `code-api/servers/myob/*.ts` and `index.ts`
 
 Input shape matches server tools: `pathParams`, `query|params|queryParams`, `headers`, `body`, plus OData keys like `$filter`, `$top`, etc.
+
+## Runtime helpers (genéricos para todas las tools)
+
+Usa `code-api/runtime.ts` para limitar tamaño de salida de manera uniforme:
+
+- `execList(tool | toolName, args, { select, top, maxPages, sampleSize, project })` → `{ count, sample }`
+- `execSingle(tool | toolName, args, { project })` → objeto proyectado
+
+Ejemplo:
+
+```ts
+import { execList } from './runtime';
+import * as myob from './servers/myob';
+
+const res = await execList(myob.Contact_GetList, { $filter: "substringof('Angel',DisplayName) eq true" }, {
+	select: ['ContactID','DisplayName','Email'],
+	top: 50,
+	maxPages: 3,
+	sampleSize: 5,
+	project: (r: any) => ({ id: r?.ContactID?.value, name: r?.DisplayName?.value, email: r?.Email?.value })
+});
+// res.count y res.sample son pequeños y seguros para Copilot Studio.
+```

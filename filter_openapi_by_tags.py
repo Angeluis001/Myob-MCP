@@ -10,14 +10,7 @@ DST = ROOT / "REDBACK_TEST_API_short.json"
 
 # Tags requested by the user (case-insensitive). Some are category-like and should match prefixes.
 REQUESTED_TAGS_RAW = [
-    "account",
-    "Contact",
-    "Customer",
-    "Lead",
-    "Opportunity",  
-    "Purchase",
-    "Sales",
-    "Vendor",
+    "StockItem",
 ]
 
 # Normalize and build matching strategy

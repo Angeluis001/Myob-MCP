@@ -1,0 +1,33 @@
+{
+  "name": "ts-mcp-myob-code-exec-salesorders",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript MCP server for MYOB Advanced SalesOrders with code-exec wrappers generator.",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "postinstall": "npm run build",
+    "generate:code-api": "node ./scripts/generate-code-api.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "packageManager": "npm@10.9.0",
+  "azureDeploy": {
+    "entryPath": "/mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.2.0",
+    "axios": "^1.7.7",
+    "axios-cookiejar-support": "^6.0.2",
+    "tough-cookie": "^4.1.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.15.7",
+    "typescript": "^5.6.3"
+  }
+}

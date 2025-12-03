@@ -33,6 +33,9 @@ export function buildToolsFromOpenAPI(spec: any, http: CookieAxios, baseUrl?: st
   const APPLY_DEFAULTS = ((process.env.MYOB_APPLY_DEFAULTS || '').toLowerCase() as string) in ({ '1': 1, true: 1, yes: 1 } as any);
   const DEFAULT_TOP = Number(process.env.DEFAULT_TOP || '50');
   const DEFAULT_SELECT = (process.env.DEFAULT_SELECT || '').trim();
+  const RESPONSE_MODE = (process.env.MYOB_RESPONSE_MODE || 'summary').toLowerCase(); // 'summary' | 'full'
+  const SAMPLE_SIZE = Math.max(1, Number(process.env.MYOB_SAMPLE_SIZE || '5'));
+  const PREVIEW_MAX = Math.max(512, Number(process.env.MYOB_PREVIEW_MAX_BYTES || '12000'));
 
   for (const [p, item] of Object.entries(paths)) {
     const methods = ['get', 'post', 'put', 'patch', 'delete'] as const;
@@ -107,7 +110,7 @@ export function buildToolsFromOpenAPI(spec: any, http: CookieAxios, baseUrl?: st
         const redactedHeaders = { ...(headers || {}) } as Record<string, any>;
         const redact = (k: string) => k.toLowerCase() === 'authorization' || k.toLowerCase() === 'cookie' || k.toLowerCase() === 'set-cookie';
         Object.keys(redactedHeaders || {}).forEach((k) => { if (redact(k)) redactedHeaders[k] = '[REDACTED]'; });
-        const bodyPreview = (() => { try { const txt = typeof body === 'string' ? body : JSON.stringify(body); if (!txt) return undefined; return txt; } catch { return undefined; } })();
+        const bodyPreview = (() => { try { const txt = typeof body === 'string' ? body : JSON.stringify(body); if (!txt) return undefined; return txt.length > PREVIEW_MAX ? txt.slice(0, PREVIEW_MAX) + `\n...[truncated ${txt.length - PREVIEW_MAX} bytes]` : txt; } catch { return undefined; } })();
 
         try {
           if (DEBUG_HTTP) { console.log('[MYOB TS MCP][HTTP OUT]', m.toUpperCase(), finalUrl, { query, rawQuery: rawQuery || undefined, useParams, headers: redactedHeaders, body: bodyPreview }); }
@@ -118,19 +121,26 @@ export function buildToolsFromOpenAPI(spec: any, http: CookieAxios, baseUrl?: st
             try {
               const isArray = Array.isArray(data);
               const count = isArray ? (data as any[]).length : data && typeof data === 'object' ? 1 : 0;
-              const snippet = (() => { const txt = typeof data === 'string' ? data : JSON.stringify(data, null, 2); if (!txt) return ''; return txt; })();
+              const snippet = (() => { const txt = typeof data === 'string' ? data : JSON.stringify(data, null, 2); if (!txt) return ''; return txt.length > PREVIEW_MAX ? txt.slice(0, PREVIEW_MAX) + `\n...[truncated ${txt.length - PREVIEW_MAX} bytes]` : txt; })();
               return `status: ${(resp as any).status}\nitems: ${count}\nurl: ${finalUrl}\npreview:\n${snippet}`;
             } catch { return `status: ${(resp as any).status}\nurl: ${finalUrl}`; }
           };
           if (DEBUG_HTTP) { console.log('[MYOB TS MCP][HTTP IN]', (resp as any).status, finalUrl); }
-          return { content: [{ type: 'text' as const, text: makeTextPreview() }], structuredContent: { status: (resp as any).status, data, headers: Object.fromEntries(Object.entries((resp as any).headers || {}).map(([k, v]) => [k, redact(k) ? '[REDACTED]' : v])), request: { method: m.toUpperCase(), url: finalUrl, query, rawQuery: rawQuery || undefined, useParams, headers: redactedHeaders, body: bodyPreview } } };
+          const headersOut = Object.fromEntries(Object.entries((resp as any).headers || {}).map(([k, v]) => [k, redact(k) ? '[REDACTED]' : v]));
+          const baseStructured: any = { status: (resp as any).status, headers: headersOut, request: { method: m.toUpperCase(), url: finalUrl, query, rawQuery: rawQuery || undefined, useParams, headers: redactedHeaders, body: bodyPreview } };
+          if (RESPONSE_MODE === 'summary' && Array.isArray(data)) {
+            const count = (data as any[]).length;
+            const sample = (data as any[]).slice(0, SAMPLE_SIZE);
+            return { content: [{ type: 'text' as const, text: makeTextPreview() }], structuredContent: { ...baseStructured, count, sample } };
+          }
+          return { content: [{ type: 'text' as const, text: makeTextPreview() }], structuredContent: { ...baseStructured, data } };
         } catch (err: any) {
           const status = err?.response?.status ?? 500;
           const data = err?.response?.data ?? err?.message ?? 'Request failed';
           const respHeaders = err?.response?.headers || {};
           if (DEBUG_HTTP) { console.warn('[MYOB TS MCP][HTTP ERR]', status, finalUrl, err?.message); }
           const errPreview = typeof data === 'string' ? data : (() => { try { return JSON.stringify(data, null, 2); } catch { return String(data); } })();
-          return { content: [{ type: 'text' as const, text: `status: ${status}\nurl: ${finalUrl}\nerror: ${errPreview?.slice?.(0, 1000)}` }], structuredContent: { status, error: true, data, headers: Object.fromEntries(Object.entries(respHeaders).map(([k, v]) => [k, k.toLowerCase() === 'authorization' || k.toLowerCase() === 'cookie' || k.toLowerCase() === 'set-cookie' ? '[REDACTED]' : v])), request: { method: m.toUpperCase(), url: finalUrl, query, rawQuery: rawQuery || undefined, useParams, headers: redactedHeaders, body: bodyPreview } } };
+          return { content: [{ type: 'text' as const, text: `status: ${status}\nurl: ${finalUrl}\nerror: ${errPreview?.slice?.(0, Math.min(1000, PREVIEW_MAX))}` }], structuredContent: { status, error: true, data, headers: Object.fromEntries(Object.entries(respHeaders).map(([k, v]) => [k, k.toLowerCase() === 'authorization' || k.toLowerCase() === 'cookie' || k.toLowerCase() === 'set-cookie' ? '[REDACTED]' : v])), request: { method: m.toUpperCase(), url: finalUrl, query, rawQuery: rawQuery || undefined, useParams, headers: redactedHeaders, body: bodyPreview } } };
         }
       };
 
